@@ -242,35 +242,37 @@ export class MyMCP extends McpAgent {
 	}
 }
 
-// Support both Cloudflare Workers and local Node.js execution
-const isCloudflareWorker = typeof Request !== 'undefined' && typeof Response !== 'undefined';
-
-if (isCloudflareWorker) {
-	export default {
-		fetch(request: Request, env: Env, ctx: ExecutionContext) {
-			// Pass environment variables to the MCP instance
+// Cloudflare Workers export
+export default {
+	async fetch(request: Request, env: Env, ctx: ExecutionContext) {
+		// Pass environment variables to the MCP instance
+		if (typeof process !== 'undefined') {
 			process.env = { ...process.env, ...env };
+		}
 
-			const url = new URL(request.url);
+		const url = new URL(request.url);
 
-			if (url.pathname === "/sse" || url.pathname === "/sse/message") {
-				return MyMCP.serveSSE("/sse").fetch(request, env, ctx);
-			}
+		if (url.pathname === "/sse" || url.pathname === "/sse/message") {
+			return MyMCP.serveSSE("/sse").fetch(request, env, ctx);
+		}
 
-			if (url.pathname === "/mcp") {
-				return MyMCP.serve("/mcp").fetch(request, env, ctx);
-			}
+		if (url.pathname === "/mcp") {
+			return MyMCP.serve("/mcp").fetch(request, env, ctx);
+		}
 
-			return new Response("Not found", { status: 404 });
-		},
-	};
-} else {
-	// For local testing with Node.js
+		return new Response("Not found", { status: 404 });
+	},
+};
+
+// For local testing with Node.js (this won't be executed in Cloudflare Workers)
+if (typeof globalThis.process !== 'undefined' && globalThis.process.env.NODE_ENV !== 'production') {
 	import('dotenv').then(({ config }) => {
 		config();
 		const mcp = new MyMCP();
 		mcp.init().then(() => {
 			console.log("MCP Server initialized for local testing");
-		});
+		}).catch(console.error);
+	}).catch(() => {
+		// Ignore dotenv import errors in production
 	});
 }
