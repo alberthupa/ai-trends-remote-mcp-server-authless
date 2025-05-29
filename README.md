@@ -2,7 +2,7 @@
 
 A Model Context Protocol (MCP) server that provides AI trends analysis using Azure Cosmos DB, Google Gemini, and OpenAI.
 
-## Features
+## Features (tryin)
 
 - **ask_trends**: Ask questions about AI trends and get AI-powered answers
 - **get_latest_trends**: Retrieve the latest AI trend reports

@@ -5,110 +5,149 @@ import { CosmosClient, Container } from "@azure/cosmos";
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import OpenAI from "openai";
 
-// Environment variables interface
-interface EnvConfig {
+// Types
+interface Env {
+	// Azure Cosmos DB Configuration
 	COSMOS_CONNECTION_STRING: string;
 	COSMOS_DATABASE_NAME: string;
 	COSMOS_CHUNKS_CONTAINER_NAME: string;
 	COSMOS_REPORTS_CONTAINER_NAME: string;
+	// Google AI Configuration
 	GOOGLE_API_KEY: string;
+	// OpenAI Configuration
 	OPENAI_API_KEY: string;
 }
 
-// Trend document interfaces
-interface ChunkDocument {
+interface TrendReport {
 	id: string;
-	content: string;
-	timestamp?: string;
+	trend_name: string;
+	field: string;
+	subfield: string;
+	analysis: string;
+	key_insights: string[];
+	data_sources: string[];
+	confidence_score: number;
+	time_horizon: string;
+	created_at: string;
+	updated_at: string;
+	geographic_relevance?: string[];
+	sector_tags?: string[];
+	disruption_potential?: string;
+	market_implications?: string;
+	[key: string]: any; // Allow additional fields
 }
 
-interface ReportDocument {
-	id: string;
-	title: string;
-	timestamp: string;
-	content: string;
-	category?: string;
+interface SearchOptions {
+	field?: string;
+	subfield?: string;
+	keywords?: string[];
+	startDate?: string;
+	endDate?: string;
+	minConfidence?: number;
+	timeHorizon?: string;
+	geographicRegion?: string;
+	disruptionPotential?: string;
+	limit?: number;
 }
 
-// Define our MCP agent with AI trends tools
-export class MyMCP extends McpAgent {
-	server = new McpServer({
-		name: "AI Trends Analyzer",
-		version: "1.0.0",
-	});
+// Helper functions
+async function initializeCosmosContainers(env: Env): Promise<{
+	chunksContainer: Container;
+	reportsContainer: Container;
+}> {
+	const cosmosClient = new CosmosClient(env.COSMOS_CONNECTION_STRING);
+	const database = cosmosClient.database(env.COSMOS_DATABASE_NAME);
 
-	private cosmosClient?: CosmosClient;
-	private chunksContainer?: Container;
-	private reportsContainer?: Container;
-	private genAI?: GoogleGenerativeAI;
-	private openai?: OpenAI;
-	private config?: EnvConfig;
+	const chunksContainer = database.container(env.COSMOS_CHUNKS_CONTAINER_NAME);
+	const reportsContainer = database.container(env.COSMOS_REPORTS_CONTAINER_NAME);
 
-	async init() {
-		// Initialize configuration from environment
-		// Support both Cloudflare Workers env and Node.js process.env
-		const getEnvVar = (key: string) => {
-			if (typeof process !== 'undefined' && process.env) {
-				return process.env[key] || "";
-			}
-			// For Cloudflare Workers, env vars are passed differently
-			return "";
-		};
+	// Test containers are accessible
+	try {
+		await chunksContainer.read();
+		await reportsContainer.read();
+	} catch (error) {
+		console.error("Error initializing Cosmos DB containers:", error);
+		throw new Error("Failed to initialize Cosmos DB containers");
+	}
 
-		this.config = {
-			COSMOS_CONNECTION_STRING: getEnvVar('COSMOS_CONNECTION_STRING'),
-			COSMOS_DATABASE_NAME: getEnvVar('COSMOS_DATABASE_NAME'),
-			COSMOS_CHUNKS_CONTAINER_NAME: getEnvVar('COSMOS_CHUNKS_CONTAINER_NAME'),
-			COSMOS_REPORTS_CONTAINER_NAME: getEnvVar('COSMOS_REPORTS_CONTAINER_NAME'),
-			GOOGLE_API_KEY: getEnvVar('GOOGLE_API_KEY'),
-			OPENAI_API_KEY: getEnvVar('OPENAI_API_KEY'),
-		};
+	return { chunksContainer, reportsContainer };
+}
 
-		// Initialize clients
-		if (this.config.COSMOS_CONNECTION_STRING) {
-			this.cosmosClient = new CosmosClient(this.config.COSMOS_CONNECTION_STRING);
-			const database = this.cosmosClient.database(this.config.COSMOS_DATABASE_NAME);
-			this.chunksContainer = database.container(this.config.COSMOS_CHUNKS_CONTAINER_NAME);
-			this.reportsContainer = database.container(this.config.COSMOS_REPORTS_CONTAINER_NAME);
-		}
+// MCP instance with lazy initialization
+let containers: { chunksContainer: Container; reportsContainer: Container } | null = null;
 
-		if (this.config.GOOGLE_API_KEY) {
-			this.genAI = new GoogleGenerativeAI(this.config.GOOGLE_API_KEY);
-		}
+const MyMCP = McpServer.extend({
+	tools: [
+		{
+			name: "get_latest_trends",
+			description: "Get the latest AI trends with optional filtering",
+			schema: z.object({
+				limit: z.string().optional().describe("Number of trends to return (default: 10)"),
+				field: z.string().optional().describe("Filter by field (e.g., 'Healthcare', 'Finance')"),
+				minConfidence: z.string().optional().describe("Minimum confidence score (0-1)")
+			})
+		},
+		// ...existing code...
+	],
 
-		if (this.config.OPENAI_API_KEY) {
-			this.openai = new OpenAI({
-				apiKey: this.config.OPENAI_API_KEY,
-			});
-		}
+	callbacks: {
+		async onToolCall({ name, args }, env: Env) {
+			try {
+				// Initialize containers if not already done
+				if (!containers) {
+					containers = await initializeCosmosContainers(env);
+				}
 
-		// Tool: ask_trends
-		this.server.tool(
-			"ask_trends",
-			{
-				question: z.string().describe("The question to ask about AI trends"),
-			},
-			async ({ question }) => {
-				try {
+				const { chunksContainer, reportsContainer } = containers;
+
+				if (name === "get_latest_trends") {
+					const limit = Math.min(Number.parseInt(args.limit || "10"), 50);
+					const minConfidence = args.minConfidence ? Number.parseFloat(args.minConfidence) : 0;
+
+					let query = "SELECT * FROM c WHERE c.confidence_score >= @minConfidence";
+					const parameters = [{ name: "@minConfidence", value: minConfidence }];
+
+					if (args.field) {
+						query += " AND c.field = @field";
+						parameters.push({ name: "@field", value: args.field });
+					}
+
+					query += " ORDER BY c.created_at DESC OFFSET 0 LIMIT @limit";
+					parameters.push({ name: "@limit", value: limit });
+
+					const { resources } = await reportsContainer.items.query({
+						query,
+						parameters
+					}).fetchAll();
+
+					return JSON.stringify(resources, null, 2);
+				}
+
+				// Tool: ask_trends
+				if (name === "ask_trends") {
+					const question = args.question as string;
+
 					// Get knowledge chunks from Cosmos DB
-					const chunks = await this.getKnowledgeChunks();
+					const chunks = await chunksContainer.items
+						.query<ChunkDocument>("SELECT * FROM c ORDER BY c._ts DESC OFFSET 0 LIMIT 50")
+						.fetchAll();
 
 					// Prepare context for the AI
-					const context = chunks
+					const context = chunks.resources
 						.map(chunk => chunk.content)
 						.join("\n\n");
 
 					// Use Google Gemini or OpenAI to answer the question
 					let answer = "";
 
-					if (this.genAI) {
-						const model = this.genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+					if (env.GOOGLE_API_KEY) {
+						const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
 						const prompt = `Based on the following AI trends knowledge:\n\n${context}\n\nQuestion: ${question}\n\nProvide a comprehensive answer:`;
 
 						const result = await model.generateContent(prompt);
 						answer = result.response.text();
-					} else if (this.openai) {
-						const completion = await this.openai.chat.completions.create({
+					} else if (env.OPENAI_API_KEY) {
+						const completion = await openai.chat.completions.create({
 							model: "gpt-4o-mini",
 							messages: [
 								{
@@ -137,110 +176,21 @@ export class MyMCP extends McpAgent {
 							},
 						],
 					};
-				} catch (error) {
-					return {
-						content: [
-							{
-								type: "text",
-								text: `Error answering question: ${error instanceof Error ? error.message : "Unknown error"}`,
-							},
-						],
-					};
 				}
+
+				// ...existing code...
+
+				return "Unknown tool";
+			} catch (error) {
+				console.error(`Error in tool ${name}:`, error);
+				return `Error: ${error instanceof Error ? error.message : 'Unknown error occurred'}`;
 			}
-		);
-
-		// Tool: get_latest_trends
-		this.server.tool(
-			"get_latest_trends",
-			{
-				limit: z.number().optional().default(10).describe("Number of trends to retrieve"),
-			},
-			async ({ limit }) => {
-				try {
-					const reports = await this.getLatestReports(limit);
-
-					const formattedTrends = reports
-						.map((report, index) => {
-							const date = new Date(report.timestamp);
-							const formattedDate = date.toLocaleDateString("en-US", {
-								year: "numeric",
-								month: "short",
-								day: "numeric",
-							});
-
-							return `${index + 1}. **${report.title}** (${formattedDate})\n   ${report.content}\n   ${report.category ? `Category: ${report.category}` : ""}`;
-						})
-						.join("\n\n");
-
-					return {
-						content: [
-							{
-								type: "text",
-								text: formattedTrends || "No trends found",
-							},
-						],
-					};
-				} catch (error) {
-					return {
-						content: [
-							{
-								type: "text",
-								text: `Error fetching trends: ${error instanceof Error ? error.message : "Unknown error"}`,
-							},
-						],
-					};
-				}
-			}
-		);
-	}
-
-	// Helper method to fetch knowledge chunks from Cosmos DB
-	private async getKnowledgeChunks(limit: number = 50): Promise<ChunkDocument[]> {
-		if (!this.chunksContainer) {
-			throw new Error("Cosmos DB chunks container not initialized");
 		}
-
-		const querySpec = {
-			query: "SELECT * FROM c ORDER BY c._ts DESC OFFSET 0 LIMIT @limit",
-			parameters: [
-				{
-					name: "@limit",
-					value: limit,
-				},
-			],
-		};
-
-		const { resources } = await this.chunksContainer.items
-			.query<ChunkDocument>(querySpec)
-			.fetchAll();
-
-		return resources;
 	}
+});
 
-	// Helper method to fetch latest reports from Cosmos DB
-	private async getLatestReports(limit: number = 10): Promise<ReportDocument[]> {
-		if (!this.reportsContainer) {
-			throw new Error("Cosmos DB reports container not initialized");
-		}
-
-		const querySpec = {
-			query: "SELECT * FROM c ORDER BY c.timestamp DESC OFFSET 0 LIMIT @limit",
-			parameters: [
-				{
-					name: "@limit",
-					value: limit,
-				},
-			],
-		};
-
-		const { resources } = await this.reportsContainer.items
-			.query<ReportDocument>(querySpec)
-			.fetchAll();
-
-		return resources;
-	}
-}
+// Export MyMCP for Durable Objects
+export { MyMCP };
 
 // Cloudflare Workers export
 export default {
