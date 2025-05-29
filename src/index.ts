@@ -1,4 +1,3 @@
-import { McpAgent } from "agents/mcp";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { CosmosClient, Container } from "@azure/cosmos";
@@ -76,22 +75,83 @@ async function initializeCosmosContainers(env: Env): Promise<{
 // MCP instance with lazy initialization
 let containers: { chunksContainer: Container; reportsContainer: Container } | null = null;
 
-const MyMCP = McpServer.extend({
-	tools: [
-		{
-			name: "get_latest_trends",
-			description: "Get the latest AI trends with optional filtering",
-			schema: z.object({
-				limit: z.string().optional().describe("Number of trends to return (default: 10)"),
-				field: z.string().optional().describe("Filter by field (e.g., 'Healthcare', 'Finance')"),
-				minConfidence: z.string().optional().describe("Minimum confidence score (0-1)")
-			})
-		},
-		// ...existing code...
-	],
+// Create MCP server instance
+const createMcpServer = (env: Env) => {
+	const server = new McpServer({
+		name: "ai-trends-mcp-server",
+		version: "0.1.0"
+	});
 
-	callbacks: {
-		async onToolCall({ name, args }, env: Env) {
+	// Register tools
+	server.setRequestHandler({
+		method: "tools/list",
+		handler: async () => ({
+			tools: [
+				{
+					name: "get_latest_trends",
+					description: "Get the latest AI trends with optional filtering",
+					inputSchema: {
+						type: "object",
+						properties: {
+							limit: { type: "string", description: "Number of trends to return (default: 10)" },
+							field: { type: "string", description: "Filter by field (e.g., 'Healthcare', 'Finance')" },
+							minConfidence: { type: "string", description: "Minimum confidence score (0-1)" }
+						}
+					}
+				},
+				{
+					name: "search_trends",
+					description: "Search AI trends with comprehensive filtering options",
+					inputSchema: {
+						type: "object",
+						properties: {
+							field: { type: "string", description: "Filter by field" },
+							subfield: { type: "string", description: "Filter by subfield" },
+							keywords: { type: "array", items: { type: "string" }, description: "Keywords to search for" },
+							startDate: { type: "string", description: "Start date (ISO format)" },
+							endDate: { type: "string", description: "End date (ISO format)" },
+							minConfidence: { type: "string", description: "Minimum confidence score (0-1)" },
+							timeHorizon: { type: "string", description: "Time horizon filter" },
+							geographicRegion: { type: "string", description: "Geographic region filter" },
+							disruptionPotential: { type: "string", description: "Disruption potential filter" },
+							limit: { type: "string", description: "Maximum number of results" }
+						}
+					}
+				},
+				{
+					name: "get_trend_by_id",
+					description: "Get a specific trend by ID",
+					inputSchema: {
+						type: "object",
+						properties: {
+							id: { type: "string", description: "The trend ID" }
+						},
+						required: ["id"]
+					}
+				},
+				{
+					name: "analyze_trend_with_ai",
+					description: "Get AI-powered analysis of a trend",
+					inputSchema: {
+						type: "object",
+						properties: {
+							trendId: { type: "string", description: "The trend ID to analyze" },
+							aiProvider: { type: "string", description: "AI provider to use ('google' or 'openai')", default: "google" },
+							analysisType: { type: "string", description: "Type of analysis ('impact', 'technical', 'market', 'comprehensive')", default: "comprehensive" }
+						},
+						required: ["trendId"]
+					}
+				}
+			]
+		})
+	});
+
+	// Handle tool calls
+	server.setRequestHandler({
+		method: "tools/call",
+		handler: async ({ params }) => {
+			const { name, arguments: args } = params;
+
 			try {
 				// Initialize containers if not already done
 				if (!containers) {
@@ -120,7 +180,14 @@ const MyMCP = McpServer.extend({
 						parameters
 					}).fetchAll();
 
-					return JSON.stringify(resources, null, 2);
+					return {
+						content: [
+							{
+								type: "text",
+								text: JSON.stringify(resources, null, 2)
+							}
+						]
+					};
 				}
 
 				// Tool: ask_trends
@@ -178,36 +245,52 @@ const MyMCP = McpServer.extend({
 					};
 				}
 
-				// ...existing code...
+				// ...existing code for other tools...
 
-				return "Unknown tool";
+				throw new Error(`Unknown tool: ${name}`);
 			} catch (error) {
 				console.error(`Error in tool ${name}:`, error);
-				return `Error: ${error instanceof Error ? error.message : 'Unknown error occurred'}`;
+				return {
+					content: [
+						{
+							type: "text",
+							text: `Error: ${error instanceof Error ? error.message : 'Unknown error occurred'}`
+						}
+					],
+					isError: true
+				};
 			}
 		}
-	}
-});
+	});
 
-// Export MyMCP for Durable Objects
-export { MyMCP };
+	return server;
+};
+
+// Export MyMCP class for Durable Objects (if needed)
+export class MyMCP {
+	private server: McpServer;
+
+	constructor(state: any, env: Env) {
+		this.server = createMcpServer(env);
+	}
+
+	async fetch(request: Request) {
+		return this.server.fetch(request);
+	}
+}
 
 // Cloudflare Workers export
 export default {
 	async fetch(request: Request, env: Env, ctx: ExecutionContext) {
-		// Pass environment variables to the MCP instance
-		if (typeof process !== 'undefined') {
-			process.env = { ...process.env, ...env };
-		}
-
+		const server = createMcpServer(env);
 		const url = new URL(request.url);
 
 		if (url.pathname === "/sse" || url.pathname === "/sse/message") {
-			return MyMCP.serveSSE("/sse").fetch(request, env, ctx);
+			return server.fetch(request);
 		}
 
 		if (url.pathname === "/mcp") {
-			return MyMCP.serve("/mcp").fetch(request, env, ctx);
+			return server.fetch(request);
 		}
 
 		return new Response("Not found", { status: 404 });
