@@ -6,7 +6,7 @@
 	"$schema": "node_modules/wrangler/config-schema.json",
 	"name": "ai-trends-mcp-server",
 	"main": "src/index.ts",
-	"compatibility_date": "2024-01-01",
+	"compatibility_date": "2024-09-23",
 	"compatibility_flags": [
 		"nodejs_compat"
 	],
@@ -33,5 +33,6 @@
 		"COSMOS_DATABASE_NAME": "hupi-loch",
 		"COSMOS_CHUNKS_CONTAINER_NAME": "knowledge-chunks",
 		"COSMOS_REPORTS_CONTAINER_NAME": "knowledge-reports"
-	}
+	},
+	"node_compat": true
 }

@@ -263,16 +263,3 @@ export default {
 		return new Response("Not found", { status: 404 });
 	},
 };
-
-// For local testing with Node.js (this won't be executed in Cloudflare Workers)
-if (typeof globalThis.process !== 'undefined' && globalThis.process.env.NODE_ENV !== 'production') {
-	import('dotenv').then(({ config }) => {
-		config();
-		const mcp = new MyMCP();
-		mcp.init().then(() => {
-			console.log("MCP Server initialized for local testing");
-		}).catch(console.error);
-	}).catch(() => {
-		// Ignore dotenv import errors in production
-	});
-}
