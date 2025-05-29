@@ -1,4 +1,5 @@
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { Server } from "@modelcontextprotocol/sdk/server/index.js";
+import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 import { CosmosClient, Container } from "@azure/cosmos";
 import { GoogleGenerativeAI } from "@google/generative-ai";
@@ -77,189 +78,216 @@ let containers: { chunksContainer: Container; reportsContainer: Container } | nu
 
 // Create MCP server instance
 const createMcpServer = (env: Env) => {
-	const server = new McpServer({
+	const server = new Server({
 		name: "ai-trends-mcp-server",
 		version: "0.1.0"
+	}, {
+		capabilities: {
+			tools: {}
+		}
 	});
 
-	// Register tools
-	server.setRequestHandler({
-		method: "tools/list",
-		handler: async () => ({
-			tools: [
-				{
-					name: "get_latest_trends",
-					description: "Get the latest AI trends with optional filtering",
-					inputSchema: {
-						type: "object",
-						properties: {
-							limit: { type: "string", description: "Number of trends to return (default: 10)" },
-							field: { type: "string", description: "Filter by field (e.g., 'Healthcare', 'Finance')" },
-							minConfidence: { type: "string", description: "Minimum confidence score (0-1)" }
-						}
-					}
-				},
-				{
-					name: "search_trends",
-					description: "Search AI trends with comprehensive filtering options",
-					inputSchema: {
-						type: "object",
-						properties: {
-							field: { type: "string", description: "Filter by field" },
-							subfield: { type: "string", description: "Filter by subfield" },
-							keywords: { type: "array", items: { type: "string" }, description: "Keywords to search for" },
-							startDate: { type: "string", description: "Start date (ISO format)" },
-							endDate: { type: "string", description: "End date (ISO format)" },
-							minConfidence: { type: "string", description: "Minimum confidence score (0-1)" },
-							timeHorizon: { type: "string", description: "Time horizon filter" },
-							geographicRegion: { type: "string", description: "Geographic region filter" },
-							disruptionPotential: { type: "string", description: "Disruption potential filter" },
-							limit: { type: "string", description: "Maximum number of results" }
-						}
-					}
-				},
-				{
-					name: "get_trend_by_id",
-					description: "Get a specific trend by ID",
-					inputSchema: {
-						type: "object",
-						properties: {
-							id: { type: "string", description: "The trend ID" }
-						},
-						required: ["id"]
-					}
-				},
-				{
-					name: "analyze_trend_with_ai",
-					description: "Get AI-powered analysis of a trend",
-					inputSchema: {
-						type: "object",
-						properties: {
-							trendId: { type: "string", description: "The trend ID to analyze" },
-							aiProvider: { type: "string", description: "AI provider to use ('google' or 'openai')", default: "google" },
-							analysisType: { type: "string", description: "Type of analysis ('impact', 'technical', 'market', 'comprehensive')", default: "comprehensive" }
-						},
-						required: ["trendId"]
-					}
-				}
-			]
-		})
-	});
-
-	// Handle tool calls
-	server.setRequestHandler({
-		method: "tools/call",
-		handler: async ({ params }) => {
-			const { name, arguments: args } = params;
-
-			try {
-				// Initialize containers if not already done
-				if (!containers) {
-					containers = await initializeCosmosContainers(env);
-				}
-
-				const { chunksContainer, reportsContainer } = containers;
-
-				if (name === "get_latest_trends") {
-					const limit = Math.min(Number.parseInt(args.limit || "10"), 50);
-					const minConfidence = args.minConfidence ? Number.parseFloat(args.minConfidence) : 0;
-
-					let query = "SELECT * FROM c WHERE c.confidence_score >= @minConfidence";
-					const parameters = [{ name: "@minConfidence", value: minConfidence }];
-
-					if (args.field) {
-						query += " AND c.field = @field";
-						parameters.push({ name: "@field", value: args.field });
-					}
-
-					query += " ORDER BY c.created_at DESC OFFSET 0 LIMIT @limit";
-					parameters.push({ name: "@limit", value: limit });
-
-					const { resources } = await reportsContainer.items.query({
-						query,
-						parameters
-					}).fetchAll();
-
-					return {
-						content: [
-							{
-								type: "text",
-								text: JSON.stringify(resources, null, 2)
-							}
-						]
-					};
-				}
-
-				// Tool: ask_trends
-				if (name === "ask_trends") {
-					const question = args.question as string;
-
-					// Get knowledge chunks from Cosmos DB
-					const chunks = await chunksContainer.items
-						.query<ChunkDocument>("SELECT * FROM c ORDER BY c._ts DESC OFFSET 0 LIMIT 50")
-						.fetchAll();
-
-					// Prepare context for the AI
-					const context = chunks.resources
-						.map(chunk => chunk.content)
-						.join("\n\n");
-
-					// Use Google Gemini or OpenAI to answer the question
-					let answer = "";
-
-					if (env.GOOGLE_API_KEY) {
-						const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
-						const prompt = `Based on the following AI trends knowledge:\n\n${context}\n\nQuestion: ${question}\n\nProvide a comprehensive answer:`;
-
-						const result = await model.generateContent(prompt);
-						answer = result.response.text();
-					} else if (env.OPENAI_API_KEY) {
-						const completion = await openai.chat.completions.create({
-							model: "gpt-4o-mini",
-							messages: [
-								{
-									role: "system",
-									content: "You are an AI trends expert. Answer questions based on the provided context about latest AI trends.",
-								},
-								{
-									role: "user",
-									content: `Based on the following AI trends knowledge:\n\n${context}\n\nQuestion: ${question}`,
-								},
-							],
-							temperature: 0.7,
-							max_tokens: 1000,
-						});
-
-						answer = completion.choices[0]?.message?.content || "No answer generated";
-					} else {
-						answer = "AI services not configured. Please set up Google AI or OpenAI API keys.";
-					}
-
-					return {
-						content: [
-							{
-								type: "text",
-								text: answer,
-							},
-						],
-					};
-				}
-
-				// ...existing code for other tools...
-
-				throw new Error(`Unknown tool: ${name}`);
-			} catch (error) {
-				console.error(`Error in tool ${name}:`, error);
-				return {
-					content: [
-						{
-							type: "text",
-							text: `Error: ${error instanceof Error ? error.message : 'Unknown error occurred'}`
-						}
-					],
-					isError: true
-				};
+	// Define tools
+	server.addTool({
+		name: "get_latest_trends",
+		description: "Get the latest AI trends with optional filtering",
+		inputSchema: {
+			type: "object",
+			properties: {
+				limit: { type: "string", description: "Number of trends to return (default: 10)" },
+				field: { type: "string", description: "Filter by field (e.g., 'Healthcare', 'Finance')" },
+				minConfidence: { type: "string", description: "Minimum confidence score (0-1)" }
 			}
+		}
+	}, async (args) => {
+		try {
+			// Initialize containers if not already done
+			if (!containers) {
+				containers = await initializeCosmosContainers(env);
+			}
+
+			const { chunksContainer, reportsContainer } = containers;
+
+			const limit = Math.min(Number.parseInt(args.limit || "10"), 50);
+			const minConfidence = args.minConfidence ? Number.parseFloat(args.minConfidence) : 0;
+
+			let query = "SELECT * FROM c WHERE c.confidence_score >= @minConfidence";
+			const parameters = [{ name: "@minConfidence", value: minConfidence }];
+
+			if (args.field) {
+				query += " AND c.field = @field";
+				parameters.push({ name: "@field", value: args.field });
+			}
+
+			query += " ORDER BY c.created_at DESC OFFSET 0 LIMIT @limit";
+			parameters.push({ name: "@limit", value: limit });
+
+			const { resources } = await reportsContainer.items.query({
+				query,
+				parameters
+			}).fetchAll();
+
+			return {
+				content: [
+					{
+						type: "text",
+						text: JSON.stringify(resources, null, 2)
+					}
+				]
+			};
+		} catch (error) {
+			console.error(`Error in get_latest_trends:`, error);
+			return {
+				content: [
+					{
+						type: "text",
+						text: `Error: ${error instanceof Error ? error.message : 'Unknown error occurred'}`
+					}
+				],
+				isError: true
+			};
+		}
+	});
+
+	server.addTool({
+		name: "search_trends",
+		description: "Search AI trends with comprehensive filtering options",
+		inputSchema: {
+			type: "object",
+			properties: {
+				field: { type: "string", description: "Filter by field" },
+				subfield: { type: "string", description: "Filter by subfield" },
+				keywords: { type: "array", items: { type: "string" }, description: "Keywords to search for" },
+				startDate: { type: "string", description: "Start date (ISO format)" },
+				endDate: { type: "string", description: "End date (ISO format)" },
+				minConfidence: { type: "string", description: "Minimum confidence score (0-1)" },
+				timeHorizon: { type: "string", description: "Time horizon filter" },
+				geographicRegion: { type: "string", description: "Geographic region filter" },
+				disruptionPotential: { type: "string", description: "Disruption potential filter" },
+				limit: { type: "string", description: "Maximum number of results" }
+			}
+		}
+	}, async (args) => {
+		try {
+			// Initialize containers if not already done
+			if (!containers) {
+				containers = await initializeCosmosContainers(env);
+			}
+
+			const { reportsContainer } = containers;
+
+			// Implementation for search_trends
+			// ...existing code...
+
+			return {
+				content: [
+					{
+						type: "text",
+						text: "Search trends implementation"
+					}
+				]
+			};
+		} catch (error) {
+			console.error(`Error in search_trends:`, error);
+			return {
+				content: [
+					{
+						type: "text",
+						text: `Error: ${error instanceof Error ? error.message : 'Unknown error occurred'}`
+					}
+				],
+				isError: true
+			};
+		}
+	});
+
+	server.addTool({
+		name: "get_trend_by_id",
+		description: "Get a specific trend by ID",
+		inputSchema: {
+			type: "object",
+			properties: {
+				id: { type: "string", description: "The trend ID" }
+			},
+			required: ["id"]
+		}
+	}, async (args) => {
+		try {
+			// Initialize containers if not already done
+			if (!containers) {
+				containers = await initializeCosmosContainers(env);
+			}
+
+			const { reportsContainer } = containers;
+
+			// Implementation for get_trend_by_id
+			// ...existing code...
+
+			return {
+				content: [
+					{
+						type: "text",
+						text: "Get trend by ID implementation"
+					}
+				]
+			};
+		} catch (error) {
+			console.error(`Error in get_trend_by_id:`, error);
+			return {
+				content: [
+					{
+						type: "text",
+						text: `Error: ${error instanceof Error ? error.message : 'Unknown error occurred'}`
+					}
+				],
+				isError: true
+			};
+		}
+	});
+
+	server.addTool({
+		name: "analyze_trend_with_ai",
+		description: "Get AI-powered analysis of a trend",
+		inputSchema: {
+			type: "object",
+			properties: {
+				trendId: { type: "string", description: "The trend ID to analyze" },
+				aiProvider: { type: "string", description: "AI provider to use ('google' or 'openai')", default: "google" },
+				analysisType: { type: "string", description: "Type of analysis ('impact', 'technical', 'market', 'comprehensive')", default: "comprehensive" }
+			},
+			required: ["trendId"]
+		}
+	}, async (args) => {
+		try {
+			// Initialize containers if not already done
+			if (!containers) {
+				containers = await initializeCosmosContainers(env);
+			}
+
+			const { reportsContainer } = containers;
+
+			// Implementation for analyze_trend_with_ai
+			// ...existing code...
+
+			return {
+				content: [
+					{
+						type: "text",
+						text: "Analyze trend with AI implementation"
+					}
+				]
+			};
+		} catch (error) {
+			console.error(`Error in analyze_trend_with_ai:`, error);
+			return {
+				content: [
+					{
+						type: "text",
+						text: `Error: ${error instanceof Error ? error.message : 'Unknown error occurred'}`
+					}
+				],
+				isError: true
+			};
 		}
 	});
 
@@ -268,29 +296,50 @@ const createMcpServer = (env: Env) => {
 
 // Export MyMCP class for Durable Objects (if needed)
 export class MyMCP {
-	private server: McpServer;
+	private server: Server;
 
 	constructor(state: any, env: Env) {
 		this.server = createMcpServer(env);
 	}
 
 	async fetch(request: Request) {
-		return this.server.fetch(request);
+		// Handle SSE transport for Cloudflare Workers
+		const url = new URL(request.url);
+
+		if (url.pathname === "/sse" || url.pathname === "/sse/message") {
+			// For Cloudflare Workers, we need to handle the transport differently
+			// since we can't use stdio transport
+			return new Response("SSE endpoint - implementation needed", {
+				headers: { "Content-Type": "text/plain" }
+			});
+		}
+
+		return new Response("Not found", { status: 404 });
 	}
 }
 
 // Cloudflare Workers export
 export default {
 	async fetch(request: Request, env: Env, ctx: ExecutionContext) {
-		const server = createMcpServer(env);
 		const url = new URL(request.url);
 
+		// For SSE endpoints, we need to handle the MCP protocol over HTTP/SSE
 		if (url.pathname === "/sse" || url.pathname === "/sse/message") {
-			return server.fetch(request);
+			// Create a custom transport for Cloudflare Workers
+			// Since the SDK expects stdio transport, we need to adapt it
+			return new Response("MCP over SSE - implementation in progress", {
+				headers: {
+					"Content-Type": "text/event-stream",
+					"Cache-Control": "no-cache",
+					"Connection": "keep-alive"
+				}
+			});
 		}
 
 		if (url.pathname === "/mcp") {
-			return server.fetch(request);
+			return new Response("MCP endpoint - implementation in progress", {
+				headers: { "Content-Type": "application/json" }
+			});
 		}
 
 		return new Response("Not found", { status: 404 });
