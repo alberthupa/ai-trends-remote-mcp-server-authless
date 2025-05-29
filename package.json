@@ -1,23 +1,32 @@
 {
-	"name": "ai-trends-remote-mcp-server-authless",
+	"name": "remote-mcp-server-authless",
 	"version": "0.0.0",
-	"private": true,
+	"type": "module",
 	"scripts": {
-		"deploy": "wrangler deploy",
+		"check": "biome check src/**/*",
+		"format": "biome format --write src/**/*",
+		"biome": "biome",
 		"dev": "wrangler dev",
-		"format": "biome format --write",
-		"lint:fix": "biome lint --fix",
-		"start": "wrangler dev",
-		"cf-typegen": "wrangler types",
-		"type-check": "tsc --noEmit"
+		"deploy": "wrangler deploy",
+		"typecheck": "tsc --noEmit",
+		"test": "node --import tsx test-local.ts",
+		"test:mcp": "node --import tsx test-mcp.ts",
+		"test:dev": "NODE_ENV=development node --import tsx src/index.ts",
+		"test:simple": "node test-simple.js"
 	},
 	"dependencies": {
+		"@azure/cosmos": "^4.2.0",
+		"@google/generative-ai": "^0.21.0",
 		"@modelcontextprotocol/sdk": "^1.12.0",
 		"agents": "^0.0.93",
+		"dotenv": "^16.4.7",
+		"openai": "^4.83.0",
 		"zod": "^3.25.28"
 	},
 	"devDependencies": {
 		"@biomejs/biome": "^1.9.4",
+		"@types/node": "^22.12.0",
+		"tsx": "^4.19.4",
 		"typescript": "^5.8.3",
 		"wrangler": "^4.16.1"
 	}
