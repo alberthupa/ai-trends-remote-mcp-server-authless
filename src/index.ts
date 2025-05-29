@@ -189,6 +189,9 @@ const MyMCP = McpServer.extend({
 	}
 });
 
+// Export MyMCP for Durable Objects
+export { MyMCP };
+
 // Cloudflare Workers export
 export default {
 	async fetch(request: Request, env: Env, ctx: ExecutionContext) {
