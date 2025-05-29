@@ -4,7 +4,7 @@
  */
 {
 	"$schema": "node_modules/wrangler/config-schema.json",
-	"name": "ai-trends-mcp-server",
+	"name": "ai-trends-remote-mcp-server-authless",
 	"main": "src/index.ts",
 	"compatibility_date": "2024-09-23",
 	"compatibility_flags": [
