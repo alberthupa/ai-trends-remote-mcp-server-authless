@@ -4,13 +4,17 @@
  */
 {
 	"$schema": "node_modules/wrangler/config-schema.json",
-	"name": "ai-trends-remote-mcp-server-authless",
+	"name": "ai-trends-mcp-server",
 	"main": "src/index.ts",
-	"compatibility_date": "2025-03-10",
-	"compatibility_flags": ["nodejs_compat"],
+	"compatibility_date": "2024-01-01",
+	"compatibility_flags": [
+		"nodejs_compat"
+	],
 	"migrations": [
 		{
-			"new_sqlite_classes": ["MyMCP"],
+			"new_sqlite_classes": [
+				"MyMCP"
+			],
 			"tag": "v1"
 		}
 	],
@@ -24,5 +28,10 @@
 	},
 	"observability": {
 		"enabled": true
+	},
+	"vars": {
+		"COSMOS_DATABASE_NAME": "hupi-loch",
+		"COSMOS_CHUNKS_CONTAINER_NAME": "knowledge-chunks",
+		"COSMOS_REPORTS_CONTAINER_NAME": "knowledge-reports"
 	}
 }

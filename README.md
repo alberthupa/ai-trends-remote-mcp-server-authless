@@ -1,50 +1,88 @@
-# Building a Remote MCP Server on Cloudflare (Without Auth)
+# AI Trends MCP Server
 
-This example allows you to deploy a remote MCP server that doesn't require authentication on Cloudflare Workers. 
+A Model Context Protocol (MCP) server that provides AI trends analysis using Azure Cosmos DB, Google Gemini, and OpenAI.
 
-## Get started: 
+## Features
 
-[![Deploy to Workers](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/cloudflare/ai/tree/main/demos/remote-mcp-authless)
+- **ask_trends**: Ask questions about AI trends and get AI-powered answers
+- **get_latest_trends**: Retrieve the latest AI trend reports
 
-This will deploy your MCP server to a URL like: `remote-mcp-server-authless.<your-account>.workers.dev/sse`
+## Setup
 
-Alternatively, you can use the command line below to get the remote MCP Server created on your local machine:
+1. Install dependencies:
 ```bash
-npm create cloudflare@latest -- my-mcp-server --template=cloudflare/ai/demos/remote-mcp-authless
+npm install
 ```
 
-## Customizing your MCP Server
+2. Set up environment variables:
+   - Copy `.env.example` to `.env`
+   - Fill in your Azure Cosmos DB, Google AI, and OpenAI credentials
 
-To add your own [tools](https://developers.cloudflare.com/agents/model-context-protocol/tools/) to the MCP server, define each tool inside the `init()` method of `src/index.ts` using `this.server.tool(...)`. 
+3. Ensure your Cosmos DB has two containers:
+   - `knowledge-chunks`: For storing AI knowledge chunks
+   - `knowledge-reports`: For storing AI trend reports
 
-## Connect to Cloudflare AI Playground
+## Testing
 
-You can connect to your MCP server from the Cloudflare AI Playground, which is a remote MCP client:
+### Local Testing
 
-1. Go to https://playground.ai.cloudflare.com/
-2. Enter your deployed MCP server URL (`remote-mcp-server-authless.<your-account>.workers.dev/sse`)
-3. You can now use your MCP tools directly from the playground!
+Test the functions directly without the MCP protocol:
 
-## Connect Claude Desktop to your MCP server
+```bash
+npm test
+```
 
-You can also connect to your remote MCP server from local MCP clients, by using the [mcp-remote proxy](https://www.npmjs.com/package/mcp-remote). 
+### MCP Protocol Testing
 
-To connect to your MCP server from Claude Desktop, follow [Anthropic's Quickstart](https://modelcontextprotocol.io/quickstart/user) and within Claude Desktop go to Settings > Developer > Edit Config.
+Test with the full MCP client-server protocol:
 
-Update with this configuration:
+```bash
+npm run test:mcp
+```
+
+### Development Server
+
+Run the development server with Wrangler:
+
+```bash
+npm run dev
+```
+
+## Deployment
+
+Deploy to Cloudflare Workers:
+
+```bash
+npm run deploy
+```
+
+Make sure to set your secrets in Cloudflare:
+
+```bash
+wrangler secret put COSMOS_CONNECTION_STRING
+wrangler secret put GOOGLE_API_KEY
+wrangler secret put OPENAI_API_KEY
+```
+
+## Environment Variables
+
+- `COSMOS_CONNECTION_STRING`: Azure Cosmos DB connection string
+- `COSMOS_DATABASE_NAME`: Database name (e.g., "hupi-loch")
+- `COSMOS_CHUNKS_CONTAINER_NAME`: Container for knowledge chunks (e.g., "knowledge-chunks")
+- `COSMOS_REPORTS_CONTAINER_NAME`: Container for reports (e.g., "knowledge-reports")
+- `GOOGLE_API_KEY`: Google AI API key for Gemini
+- `OPENAI_API_KEY`: OpenAI API key
+
+## Usage with Claude Desktop
+
+Add to your Claude Desktop configuration:
 
 ```json
 {
   "mcpServers": {
-    "calculator": {
-      "command": "npx",
-      "args": [
-        "mcp-remote",
-        "http://localhost:8787/sse"  // or remote-mcp-server-authless.your-account.workers.dev/sse
-      ]
+    "ai-trends": {
+      "url": "https://your-worker.workers.dev/mcp"
     }
   }
 }
 ```
-
-Restart Claude and you should see the tools become available. 
