@@ -33,6 +33,5 @@
 		"COSMOS_DATABASE_NAME": "hupi-loch",
 		"COSMOS_CHUNKS_CONTAINER_NAME": "knowledge-chunks",
 		"COSMOS_REPORTS_CONTAINER_NAME": "knowledge-reports"
-	},
-	"node_compat": true
+	}
 }
